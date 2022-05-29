@@ -1,0 +1,405 @@
+---
+title: "Data Analysis Final Project: What Can You Learn From a Dataset on iTunes Podcasts? "
+author: "Ameni Hajji"
+date: "Spring 2022"
+output:
+  html_document:
+    theme: flatly
+    highlight: tango
+    toc: true
+    toc_float:
+      collapsed: true
+      smooth_scroll: true
+---
+```{r Libraries, message=FALSE, warning=FALSE, include=FALSE}
+library(readxl)
+library (readr)
+library(tidyverse)
+library(dplyr)
+library(tidytext)
+library(stringr)
+library(ggplot2)
+library(plotly)
+library(SnowballC)
+library(textdata)
+library(RColorBrewer)
+library(wordcloud)
+library(stargazer)
+library(equatiomatic)
+library(corrplot)
+library(scales)
+
+```
+
+
+```{css, echo=FALSE}
+table {
+  width: 70%;  
+  margin-left: auto;
+  margin-right: auto;
+} 
+
+body {
+  font-family: serif;
+}
+
+h1{
+  font-family: serif;
+}
+
+h2{
+  font-family: serif;
+}
+
+h3{
+  font-family: serif;
+}
+
+h4{
+  font-family: serif;
+}
+```
+
+
+## Introduction
+
+Podcasts have become increasingly popular in recent years. These audio talk shows, usually available for free on different digital platforms such as Spotify and iTunes, range across many categories from daily news to technology to miscellaneous topics. They provide space to share knowledge and opinions and tell stories for educational and entertaining purposes. According to the New York Times, in 2019, more than 50% of people in the US have listened to one podcast and one out of three people listened to at least one every month (Peiser). The dramatic jump in the podcast numbers from 2018 to 2019 is associated with Spotify adding podcast to its platform (Peiser). Podcasts have been around since Apple launched this feature back in 2005. Given this surge and growing interest in podcasting, these platforms compete to provide engaging content and strategically target listeners, especially since the main source of revenue is advertising. They rely on data and analyzing trends and demographics and providing user-friendly platforms for metrics and performance analysis to podcast creators to tailor their content accordingly. 
+Given this growing industry, I was curious to learn more about the listener side of the story. **What are the trends of podcasts listeners' engagement and what causes a podcast to be successful?** Evidently, this requires access to a lot of data that is not readily available. Luckily, I managed to find datasets on iTunes podcasts that provided some variables that could help me study listeners' perception on podcasting and its relation to some podcasts' features.
+
+## Data
+```{r Data Cleaning, message=FALSE, warning=FALSE, include=FALSE}
+setwd("C:/Users/ameni/OneDrive/Documents/Courses/Spring 22/Statistics and Data Analytics Business/Final Project")
+
+#first dataset
+categories = read_excel("categories.xlsx", col_names = T)
+podcasts = read_excel("podcasts.xlsx", col_names = T)
+reviews = read_excel("reviews.xlsx", col_names = T)
+
+# clean reviews date:
+reviews = reviews %>% mutate(date_created =as.Date(sub("T.*", "",reviews$created_at))) # how would i use youuuu :((()))
+
+#second dataset
+urlfile="https://raw.githubusercontent.com/odenizgiz/Podcasts-Data/master/df_popular_podcasts.csv"
+new_data = read_csv(url(urlfile))
+colnames(new_data) = c("name", "artwork", "genreID", "episodes_number", "episode_lengths", "itunes_url", "feed_URL", "podcast_url", "description")
+
+## Getting Single Categories
+categories$category=replace(categories$category, categories$category == "true-crime", "crime")
+cleaned_categories = categories %>% mutate(category = sub("-.*", "",categories$category)) #removing the subcategories
+cleaned_categories = cleaned_categories %>% distinct(podcast_id, .keep_all = T) #removing duplicate rows
+
+## Conducting sentiment analysis on the reviews to get a reviews_sentiment variable
+
+#1. remove punctuation and stop words and create individual row for each word
+reviews_words = reviews %>%
+  select(c("podcast_id", "author_id", "rating", "content", "date_created")) %>%
+  unnest_tokens(word, content) %>%
+  filter(!word %in% stop_words$word, str_detect(word, "^[a-z']+$"))
+
+#2. Getting sentiment of each word
+afinn = get_sentiments("afinn") %>% mutate(word = wordStem(word))
+reviews_afinn = reviews_words %>%
+  inner_join(afinn, by = "word")
+
+
+#3. Getting reviews sentiment summary
+reviews_summary = reviews_afinn %>%
+  group_by(podcast_id) %>%
+  summarise(reviews_sentiment = mean(value),average_rating = mean(rating))
+
+##conducting sentiment analysis on podcast descriptions to get a description_sentiment variable
+
+#1. remove punctuation and stop words and create individual row for each word
+description_words = new_data %>%
+  select(c("name", "description")) %>%
+  unnest_tokens(word, description) %>%
+  filter(!word %in% stop_words$word, str_detect(word, "^[a-z']+$"))
+
+#2. Getting sentiment of each word usign Afinn
+description_afinn = description_words %>%
+  inner_join(afinn, by = "word")
+
+#3. Getting description sentiment summary
+description_summary = description_afinn %>%
+  group_by(name) %>%
+  summarise(description_sentiment = mean(value))
+
+## Getting average ratings on each podcast and the number of ratings (we got it earlier through the sentiment analysis as well)
+ratings = reviews %>% 
+  group_by(podcast_id) %>% 
+  summarize(mean_rating = mean(rating))
+
+ratings_number = reviews %>% group_by(podcast_id) %>% 
+  count() #n stands for this number
+
+ratings = ratings %>% inner_join(ratings_number, by= c("podcast_id"="podcast_id"))
+
+## Now merging
+
+final_data = podcasts %>%
+  inner_join(new_data, by = c("title"="name"))
+
+final_data = final_data %>% 
+  inner_join(cleaned_categories, by = c("podcast_id"="podcast_id"))
+
+final_data = final_data %>% 
+  inner_join(ratings, by = c("podcast_id"="podcast_id"))
+final_data = final_data %>% 
+  inner_join(description_summary, by = c("title"="name"))
+
+final_data = final_data %>% 
+  inner_join(reviews_summary, by = c("podcast_id"="podcast_id"))
+
+
+
+```
+
+
+I gathered data from two sources on iTunes podcasts. The first one is from a Kaggle dataset called <a href="https://www.kaggle.com/datasets/thoughtvector/podcastreviews?resource=download">Podcast Reviews</a> consisting of three separate data frames which included podcasts' categories and 1 million reviews on 50k iTunes podcasts. I found a second smaller <a href=https://github.com/odenizgiz/Podcasts-Datadataset>dataset</a> in Github which included some iTunes Podcasts with their description and the number of their episodes among others.
+
+To create my final dataset for analysis, I merged the datasets based on podcasts ID numbers (podcast_id) and their titles. Before doing that, I edited some variables and added some others to simplify my eventual analysis. For instance, I removed the sub-categories from the category variable and associated one category per podcast. I added a variable for average ratings per podcast and the number of reviews (and ratings) on each podcast. I also added sentiment variables on the reviews (for my dependent variable) and on the podcast descriptions (for one my independent variable). I followed a tutorial (with some changes to apply it to my dataset) applied to Amazon reviews by Mary Anna Kivenson published on <a href = https://rpubs.com/mkivenson/sentiment-reviews>rpubs</a>. We use Afinn for the sentiment analysis. This analysis is based on using a list of English words and their associated sentiment ratings. The sentiment score ranges from -5, the most negative, to 5, the most positive. 
+
+After this data wrangling, I went down from more than 50k observations to a final data set consisting of only 1200 observations.
+
+Here is a list of some of the variables obtained:
+
+* *review_sentiment*: the average Afinn reviews sentiment score on a podcast 
+
+* *average_rating* and *mean_rating*: The average star rating given to a podcast (out of 5)
+
+* *podcast_id*: podcast ID
+
+* *title*: podcast name
+
+* *category*: podcast category. This includes but not limited to business, arts, society, technology, etc
+
+* *description sentiment*: the Afinn podcast description sentiment score
+
+* *n*: the number of reviews per podcast
+
+* *episodes_number*: episodes number of each podcast at the time of data collection
+
+## Analysis
+
+### Descriptive Statistics
+
+For a large part of my analysis, reviews_sentiment and average_rating will be my dependent variables to measure the success or the perception of a podcast. The following table shows some summary statistics on these variables from the final dataset. We notice that the average podcast rating from the cleaned dataset is 4.57 whereas the average sentiment score is 1.55, suggesting that generally, as a whole, the reviews tend to be positive but they are closer to being neutral.
+
+```{r Descriptive Stats, echo=FALSE, message=TRUE, warning=TRUE, results='asis'}
+stats = final_data %>% select(c("reviews_sentiment", "mean_rating"))
+stargazer(as.data.frame(stats), header= F, type = "html", title = "Table 1: Some Descriptive Statistics", digits = 2)
+```
+
+<br>
+To get a better sense of the relationships between the numerical variables, I use a correlation matrix. We notice that for most variables there isn't any significant correlation coefficient. The only interesting positive relation is the one between the reviews sentiment score and the average rating. The coefficient of 0.41, although weak, suggests that generally the ratings and the review sentiments move together, as we'd expect them to be.
+
+```{r correlation, echo=FALSE, message=FALSE, warning=FALSE, fig.align="center"}
+corr_matrix = cor(select_if(final_data[,8:18], is.numeric), use="pairwise.complete.obs")
+ggcorrplot::ggcorrplot(corr_matrix, type="lower", lab = T) +
+    theme(plot.title=element_text(size=12),
+        plot.subtitle = element_text(size = 10))+
+  labs(title = "Figure 1:", subtitle = "Correlation Matrix for the Numerical Variables")
+```
+Finally, Figure 2 provides a visualization on the top categories in the cleaned dataset. Arts, education, and business seem to be the dominating categories of the dataset. 
+
+```{r categories histogram, echo=FALSE, message=FALSE, warning=FALSE, fig.align="center"}
+final_data %>% 
+  group_by(category) %>%
+  summarise(count = n()) %>% 
+  mutate(ratio = count / sum(count)) %>% 
+  arrange(desc(ratio)) %>% 
+  head(10) %>% 
+  ggplot(aes(x = reorder(category,-count), y = count)) + 
+  geom_bar(stat = "identity", fill = "skyblue", color="black")+
+  theme(plot.title=element_text(size=12),
+        plot.subtitle = element_text(size = 10),
+        axis.text.x = element_text(size = 8, angle = -45))+
+  labs(title = "Figure 2:",
+    subtitle = "Top 10 Podcast Categories",
+    x= "Category",
+    y = "Count")
+```
+
+### Sentiment Analysis
+
+After conducting the sentiment text analysis on the reviews and associating sentiment scores with each podcast, I tried to visualize the words associated with each podcast review and rating. The interactive Figure 4 shows this visualization. Hovering over each word would provide information on the mean rating and sentiment score as well as its count (from all the reviews). We notice for instance that words such as 'support' and 'perfect' have positive sentiment scores and a higher ratings compared to words such as 'hate' and 'bad' which have negative sentiment scores and lower ratings.
+
+```{r most common review words, echo=FALSE, message=FALSE, warning=FALSE, fig.align="center"}
+##to be used later for visualization
+reviews_word_summary = reviews_afinn %>%
+  group_by(word) %>%
+  summarise(mean_rating = mean(rating), score = max(value), count_word = n()) %>%
+  arrange(desc(count_word))
+
+reviews_words_graph = ggplot(filter(reviews_word_summary, count_word < 60000), aes(mean_rating, score)) + geom_text(aes(label = word, color = count_word, size=count_word), position= position_jitter()) + scale_color_gradient(low = "skyblue", high = "darkblue") + coord_cartesian(xlim=c(2.5,5)) + guides(size = "none", color=FALSE) +
+  theme(plot.title=element_text(size=10),
+        plot.subtitle = element_text(size = 10))+
+  labs(title = "Figure 3: Most Common Words in Reviews",
+         x = "Average Rating",
+         y= "Word Sentiment Score")
+ggplotly(reviews_words_graph) #to hover over word for more details ~~fancy
+```
+
+Finally, a very useful summary of the sentiment analysis is a four quadrants grid showcasing how the dataset's podcasts are dispersed given the ratings and the reviews sentiments. Figure 3 shows this relationship. The plot is based off a dataset reviews_summary created at one of the steps of sentiment analysis to eventually get to the final data set (used mainly later for regression analysis). The reviews_summary include 43257 observations of podcasts and their average ratings and sentiment scores.\n We notice from the grid that generally podcasts with positive scores and higher ratings are clustered together, as suggested by the correlation matrix in figure 1. 
+
+```{r sentiment grid, echo=FALSE, fig.align="center", message=FALSE, warning=FALSE}
+y_mid = 0
+x_mid = 2.5
+
+reviews_summary %>% 
+  mutate(quadrant = case_when(average_rating > x_mid & reviews_sentiment > y_mid   ~ "Positive Rating/Postive Sentiment",
+                              average_rating <= x_mid & reviews_sentiment > y_mid  ~ "Negative Rating/Positive Sentiment",
+                              average_rating <= x_mid & reviews_sentiment <= y_mid ~ "Negative Rating/Negative Sentiment",
+                              TRUE                                      ~ "Positive Rating/Negative Sentiment")) %>% 
+  ggplot(aes(x = average_rating, y = reviews_sentiment, color = quadrant)) + 
+  geom_hline(yintercept=y_mid, color = "black", size=.5) + 
+  geom_vline(xintercept=x_mid, color = "black", size=.5) +
+  guides(color="none") +
+  scale_color_manual(values=c("skyblue", "lightcoral", "lightcoral","skyblue")) +
+  annotate("text", x = 4.33, y=4,label="Positive Rating/Postive Sentiment") +
+  annotate("text", x = 2, y=4,label="Negative Rating/Positive Sentiment") +
+  annotate("text", x = 4.33, y=-3,label="Positive Rating/Negative Sentiment") +
+  annotate("text", x = 2, y=-3,label="Negative Rating/Negative Sentiment") +
+  geom_point()+
+  labs(title = "Figure 4:",
+       subtitle="Podcast Rating vs Overall Reviews Sentiment Score", 
+       x= "Podcast Rating", 
+       y= "Overall Sentiment Score")
+```
+
+
+### Regression Analysis
+
+I'm using regression analysis to measure the degree at which my dependent variables, reviews sentiment and podcast ratings, are linearly related to some independent variables namely podcast category and description sentiment. I'm also using interaction effects to understand the relationships among my model variables.
+
+#### Claim 1
+
+First, I want to analyze the claim that each podcast category influences its listeners perception differently. Here are some statistically-significant results:
+
+* A podcast falling under the news category would have a sentiment score that is 0.43 units less than the average sentiment score. This result is significant at the $\alpha$ = 0.001 significance level. 
+
+* A podcast falling under the science category would have a sentiment score that is 0.30 units more than the average sentiment score. This result is significant at the $\alpha$ = 0.01 significance level. 
+
+* A podcast falling under the society category would have a sentiment score that is 0.24 units less than the average sentiment score. This result is significant at the $\alpha$ = 0.01 significance level. 
+
+The rest of the coefficients are detailed in Figure 5 below. 
+
+```{r m1, echo=FALSE, fig.align="center", message=FALSE, warning=FALSE}
+#since its categorical data, we use a logistic regression
+m1 <- glm(reviews_sentiment ~ category, data=final_data,
+family = "gaussian")
+#summary(m1)
+
+category_fit = data.frame(categories = as.factor(c("Average", "buddhism", "business","christianity","comedy", "crime", "education", "fiction", "government", "health", "hinduism", "history","islam","judaism","kids","leisure", "music", "news", "religion", "science", "society", "spirituality","sports","technology", "tv")), Coefficient = c(m1$coefficients[1], m1$coefficients[1]+m1$coefficients[2], m1$coefficients[1]+m1$coefficients[3], m1$coefficients[1]+m1$coefficients[4],m1$coefficients[1]+m1$coefficients[5],m1$coefficients[1]+m1$coefficients[6], m1$coefficients[1]+m1$coefficients[7], m1$coefficients[1]+m1$coefficients[8], m1$coefficients[1]+m1$coefficients[9], m1$coefficients[1]+m1$coefficients[10], m1$coefficients[1]+m1$coefficients[11], m1$coefficients[1]+m1$coefficients[12], m1$coefficients[1]+m1$coefficients[13], m1$coefficients[1]+m1$coefficients[14], m1$coefficients[1]+m1$coefficients[15], m1$coefficients[1]+m1$coefficients[16], m1$coefficients[1]+m1$coefficients[17], m1$coefficients[1]+m1$coefficients[18], m1$coefficients[1]+m1$coefficients[19], m1$coefficients[1]+m1$coefficients[20], m1$coefficients[1]+m1$coefficients[21],m1$coefficients[1]+m1$coefficients[22],m1$coefficients[1]+m1$coefficients[23],m1$coefficients[1]+m1$coefficients[24], m1$coefficients[1]+m1$coefficients[25]))
+  
+ggplot(data = category_fit)+
+  aes(x = categories, y = Coefficient)+
+  geom_point(alpha=2,color="firebrick2")+
+      theme(plot.title=element_text(size=12),
+        plot.subtitle = element_text(size = 10),
+        axis.text.x = element_text(size = 8,
+                                   angle = -45))+
+  labs(title = "Figure 5:", 
+       subtitle = "Categories and Reviews Sentiment Score - Regression Coefficients",
+       x = "Category" ,
+       y="Review Sentiment Score Coefficient")
+```
+
+#### Claim 2
+
+Next, I want to analyze the claim that a podcast that has a description with a positive sentiment would be associated with reviews that convey positive sentiments.
+
+We find that a one unit increase in the description sentiment score is associated with a 0.07 unit increase in the review sentiment. Similarly, a one unit increase in the  description sentiment score is associated with a 0.03 increase in the average podcast rating. Although the coefficients are small, they suggest that generally podcasts with positive content inspire reviews with positive content and higher ratings. The regression results are detailed in Table 2. 
+
+```{r m2 and m3, echo=FALSE, message=FALSE, warning=FALSE, results='asis'}
+m2 = lm(reviews_sentiment ~ description_sentiment, data = final_data)
+#summary(m2)
+m3 = lm(mean_rating ~ description_sentiment, data = final_data)
+#summary(m3)
+stargazer(m2, m3, title = "Table 2: Description Sentiment, Review Sentiment, and Average Rating Regression Results", type = "html")
+```
+
+<br>
+
+#### Claim 3
+
+Another claim I wanted to study is that a higher rating is associated with a fewer number of reviews and/or episodes. Studying this claim would provide insight on the robustness and reliability of the dependent variables. For instance, a high average rating associated with only one rating would be biased and misleading. Therefore, I ran a regression analysis with interaction effects. The interesting results is that the coefficients are too low to consider a linear relationship among the variables in question. The rating average seems to be, surprisingly, unrelated to the number of reviews/ratings or the number of podcast episodes. 
+
+```{r m4, message=FALSE, warning=FALSE, include=FALSE}
+m4 = lm(mean_rating ~  n*episodes_number, data = final_data)
+#summary(m4)
+```
+
+#### Claim 4
+
+Finally, another way that could be helpful to analyze listeners' engagement is to see how the number of reviews differ with podcast category. To study this, I ran a simple linear regression using data from the cleaned final dataset. Here is what I find:
+
+* A podcast falling under the category of crime will have 896.886 reviews more than the average podcast number of reviews. The p-value is way lower than 0.05, suggesting that this result is significant.
+
+* A podcast falling under the category of comedy will have 303.689 reviews more than the average podcast number of reviews. Similarly, this result is statistically significant.
+
+* A podcast falling under the news category will have 198.488 more reviews than the average podcast number of reviews. The result is also quite statistically significant.
+
+* A podcast falling under the sports category will have 167.071 more reviews than the average podcast number of reviews. This is also statistically significant with p-value lower than 0.05.
+
+* On the other hand, while the results aren't very statistically strong, spirituality, religion, science, and technology seem to be associated with a decrease in the number of reviews compared to the average. 
+
+```{r m5, message=FALSE, warning=FALSE, include=FALSE}
+m5 = lm(n ~  category, data = final_data)
+summary(m5)
+```
+
+### Prediction Model
+
+Given the regression results, and given the lack of other independent variables that could assist with the analysis, I tried to create a prediction model based on the relationship between the reviews sentiment score and the description sentiment score. As the small coefficient of the regression suggested, there is only a small change of the reviews sentiment given the description Score. Figure 6 showcases this prediction, highlighting that the reviews sentiment score would alternate between 1.4 and 1.8 on average, given any description score. 
+
+```{r prediciton, echo=FALSE, message=FALSE, warning=FALSE, fig.align="center"}
+grid = seq(-5,5,(10/600)) #a sequence from -5 to 5 for sentiment
+
+datagrid = data.frame(description=rep(grid,2))
+fits = predict(m2,
+               interval="confidence")
+length(fits) = 1202
+plotdata = data.frame(fits,datagrid) 
+ggplot(plotdata,aes(x=description,y=fits,ymin=0,ymax=3)) +
+  geom_line(lwd=3) + geom_ribbon(alpha=.2)+
+  xlab("Description Sentiment") +ylab("Reviews Snetiment") +
+  labs(title = "Figure 6:",
+       subtitle = "Prediction Model for Reviews Sentiment Score Based \non Description Sentiment Score")
+
+```
+
+
+## Findings and Conclusion
+
+```{r include=FALSE}
+View(final_data %>% group_by(podcast_id, mean_rating) %>% arrange(mean_rating) %>% head(10))
+```
+
+The study tried to look at the listeners' perception of podcast through indirect and limited analysis tools. Here are some key takeaways:
+
+* Given the sample cleaned dataset, podcasts falling under the category of arts, education, and business are the most present. Conversely, they are not associated with the highest review sentiment score. In fact, science, kids, music, islam, and leisure are associated with an increase in the reviews sentiment score whereas news and society and many of the other categories are associated with a decrease in the reviews sentiment score, with varying degrees of significance. Another analysis showed that crime, news, and sports are the categories are associated with an increase in engagement with a podcast, measured by the number of reviews given to a podcast. This is to say that different podcast categories are associated with different engagement levels and perception of listeners.
+
+* An increase in the description sentiment score is associated with a slight increase in the reviews sentiment score, suggesting that generally podcasts that convey a positive tone will be given more positive reviews and higher ratings. This relationship is very insignificant as detailed by our prediction model. Nevertheless, the analysis showed that most podcasts have positive sentiment reviews and high ratings. A further research into this might show more significant results that could provide insight into how podcast creators can tailor the language they use for their podcast description and advertisement to engage more listeners. 
+
+* In the chosen sample, the number of ratings and number of episodes wasn't associated with an impact on the average rating of podcasts. This comes as an interesting result as some podcasts have only 1 rating and others have more than a 1000! 
+
+### Evaluation and Limitations
+
+* Without any substantial data on other independent factors, there is not a lot of opportunity to conduct analysis on the trends of podcast listening and engagement. The change in reviews sentiment and ratings can be due to other variables that could provide more context. 
+
+* The limitations of the data becomes especially relevant when I end up with a cleaned dataset that mainly contains podcasts with positive reviews. This makes the sample not representative of all of podcasts population and it leads to biased/misleading conclusions.
+
+* Through better data cleaning tools, more analysis could have been done on the limited dataset. For instance, a network analysis could have been conducted to see how many reviewers reviewed the same podcast, which means that they listened to the same category. A more rigorous research on this would provide insight on how recommendation systems work. 
+
+With all of this said, working and playing around with the iTunes dataset did indeed help identify some podcast listening trends and provide understanding of some podcast consumers' preferences. 
+
+### References
+
+Kivenson, Mary Anna. “Sentiment Analysis of Amazon Reviews.” RPubs, 14 Apr. 2019, https://rpubs.com/mkivenson/sentiment-reviews. 
+
+Odenizgiz. “Odenizgiz/Podcasts-Data: Dataset of Approximately 10,000 Podcasts from Itunes.” GitHub, https://github.com/odenizgiz/Podcasts-Data. 
+
+Peiser, Jaclyn. “Podcast Growth Is Popping in the U.S., Survey Shows.” The New York Times, The New York Times, 6 Mar. 2019, https://www.nytimes.com/2019/03/06/business/media/podcast-growth.html. 
+
+Vector, Thought. “Podcast Reviews.” Kaggle, 20 Apr. 2022, https://www.kaggle.com/datasets/thoughtvector/podcastreviews?resource=download. 
